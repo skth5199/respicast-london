@@ -25,26 +25,43 @@ st.set_page_config(page_title="RespiCast London", layout="wide", page_icon="🫁
 
 
 def ensure_data():
-    needed = [
-        os.path.join(DATA_DIR, "respiratory_latest.csv"),
-        os.path.join(DATA_DIR, "respiratory_copd_borough.csv"),
-        os.path.join(DATA_DIR, "vulnerability_inputs.csv"),
-        os.path.join(DATA_DIR, "london_boroughs.geojson"),
-    ]
-    if all(os.path.exists(f) for f in needed):
+    core_files = {
+        "respiratory": os.path.join(DATA_DIR, "respiratory_latest.csv"),
+        "copd": os.path.join(DATA_DIR, "respiratory_copd_borough.csv"),
+        "vulnerability": os.path.join(DATA_DIR, "vulnerability_inputs.csv"),
+        "boundaries": os.path.join(DATA_DIR, "london_boroughs.geojson"),
+    }
+    extra_files = {
+        "housing": os.path.join(DATA_DIR, "housing_borough.csv"),
+        "ward_boundaries": os.path.join(DATA_DIR, "london_wards.geojson"),
+        "age_respiratory": os.path.join(DATA_DIR, "respiratory_age_borough.csv"),
+    }
+
+    missing_core = {k: v for k, v in core_files.items() if not os.path.exists(v)}
+    missing_extra = {k: v for k, v in extra_files.items() if not os.path.exists(v)}
+
+    if not missing_core and not missing_extra:
         return
 
-    with st.spinner("Fetching data for the first time..."):
-        from src.data.fetch_respiratory import fetch_and_save as fetch_resp
-        from src.data.fetch_vulnerability import fetch_and_save as fetch_vuln
-        from src.data.fetch_boundaries import fetch_london_geojson
-
-        if not os.path.exists(needed[0]):
+    with st.spinner("Fetching data for the first time (this may take several minutes)..."):
+        if "respiratory" in missing_core or "copd" in missing_core:
+            from src.data.fetch_respiratory import fetch_and_save as fetch_resp
             fetch_resp()
-        if not os.path.exists(needed[2]):
+        if "vulnerability" in missing_core:
+            from src.data.fetch_vulnerability import fetch_and_save as fetch_vuln
             fetch_vuln()
-        if not os.path.exists(needed[3]):
+        if "boundaries" in missing_core:
+            from src.data.fetch_boundaries import fetch_london_geojson
             fetch_london_geojson()
+        if "ward_boundaries" in missing_extra:
+            from src.data.fetch_ward_boundaries import fetch_and_save as fetch_wards
+            fetch_wards()
+        if "age_respiratory" in missing_extra:
+            from src.data.fetch_age_respiratory import fetch_and_save as fetch_age
+            fetch_age()
+        if "housing" in missing_extra:
+            from src.data.fetch_housing import fetch_and_save as fetch_housing
+            fetch_housing()
 
 
 @st.cache_data(ttl=3600)
