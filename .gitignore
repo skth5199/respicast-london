@@ -1,0 +1,9 @@
+/data/
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+.claude/
+*.egg-info/
+dist/
+build/
+.env
