@@ -7,7 +7,7 @@ from plotly.subplots import make_subplots
 import streamlit as st
 
 from src.data.fetch_cold_alert import get_london_cold_alert, alert_severity
-from src.model.vulnerability import compute_vulnerability_scores, build_risk_table
+from src.model.vulnerability import compute_vulnerability_scores, build_risk_table, compute_age_risk_scores
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
@@ -71,13 +71,28 @@ def load_data():
         with open(ward_geo_path) as f:
             ward_geojson = json.load(f)
 
-    return vuln, resp, copd_ts, geojson, housing, housing_ward, ward_geojson
+    housing_postcode = None
+    pc_path = os.path.join(DATA_DIR, "housing_postcode.csv")
+    if os.path.exists(pc_path):
+        housing_postcode = pd.read_csv(pc_path)
+
+    age_data = None
+    age_path = os.path.join(DATA_DIR, "respiratory_age_borough.csv")
+    if os.path.exists(age_path):
+        age_data = pd.read_csv(age_path)
+
+    age_latest = None
+    age_latest_path = os.path.join(DATA_DIR, "respiratory_age_latest.csv")
+    if os.path.exists(age_latest_path):
+        age_latest = pd.read_csv(age_latest_path)
+
+    return vuln, resp, copd_ts, geojson, housing, housing_ward, ward_geojson, housing_postcode, age_data, age_latest
 
 
 @st.cache_data(ttl=1800)
 def load_forecast():
     from src.data.fetch_weather_forecast import fetch_7day_forecast, fetch_historical_winters
-    from src.model.prediction import predict_respiratory_risk, find_historical_analogues
+    from src.model.prediction import predict_respiratory_risk, find_historical_analogues, enrich_analogues_with_outcomes
 
     forecast_path = os.path.join(DATA_DIR, "weather_forecast.csv")
     hist_path = os.path.join(DATA_DIR, "weather_historical_winters.csv")
@@ -92,6 +107,13 @@ def load_forecast():
 
     prediction_df = predict_respiratory_risk(forecast_df)
     analogues = find_historical_analogues(forecast_df, hist_df, n=3)
+
+    wm_path = os.path.join(DATA_DIR, "respiratory_age_borough.csv")
+    if os.path.exists(wm_path):
+        wm_df = pd.read_csv(wm_path)
+        wm_london = wm_df[wm_df["indicator_label"].isin(["winter_mortality_all", "winter_mortality_85plus"])]
+        analogues = enrich_analogues_with_outcomes(analogues, wm_london)
+
     return prediction_df, analogues
 
 
@@ -167,7 +189,7 @@ def render_forecast_section(prediction_df, analogues):
     st.plotly_chart(fig, config={"responsive": True})
 
     if analogues:
-        with st.expander("Historical Analogues — similar past weather patterns"):
+        with st.expander("Historical Analogues — similar past weather patterns & hospital outcomes"):
             for j, a in enumerate(analogues, 1):
                 st.markdown(
                     f"**Match {j}** ({a['start_date']} to {a['end_date']}) — "
@@ -175,6 +197,29 @@ def render_forecast_section(prediction_df, analogues):
                     f"Following week: min {a['following_min_temp']:.1f}°C, "
                     f"avg {a['following_avg_temp']:.1f}°C"
                 )
+
+                wm_all = a.get("winter_mortality_all")
+                wm_85 = a.get("winter_mortality_85plus")
+                if wm_all is not None or wm_85 is not None:
+                    wy = a.get("winter_year", "Unknown")
+                    parts = []
+                    if wm_all is not None:
+                        avg_all = a.get("winter_mortality_all_avg")
+                        pct = a.get("winter_mortality_pct_above")
+                        severity = "above" if pct and pct > 0 else "below"
+                        parts.append(f"Winter mortality index: **{wm_all}** (London avg: {avg_all})")
+                        if pct is not None:
+                            parts.append(f"**{abs(pct):.1f}% {severity}** average")
+                    if wm_85 is not None:
+                        avg_85 = a.get("winter_mortality_85plus_avg")
+                        parts.append(f"85+ mortality index: **{wm_85}** (avg: {avg_85})")
+                    st.markdown(
+                        f"&nbsp;&nbsp;&nbsp;&nbsp;📊 *Winter {wy}*: " + " | ".join(parts)
+                    )
+                else:
+                    st.markdown(
+                        f"&nbsp;&nbsp;&nbsp;&nbsp;*No winter mortality data for {a.get('winter_year', 'this period')}*"
+                    )
 
 
 def render_map(risk_df, geojson, color_col="vulnerability_score", title="Vulnerability"):
@@ -206,7 +251,80 @@ def render_map(risk_df, geojson, color_col="vulnerability_score", title="Vulnera
     return fig
 
 
-def render_housing_section(housing_df, housing_ward_df, ward_geojson):
+def render_age_risk_section(selected, risk_df, age_data, age_latest):
+    st.markdown(f"**Age Risk Profile — {selected}**")
+
+    row = risk_df[risk_df["area_name"] == selected].iloc[0]
+    area_code = row["area_code"]
+
+    col_child, col_elderly = st.columns(2)
+
+    with col_child:
+        st.markdown("##### Children (0–9 yrs)")
+        asthma_val = row.get("asthma_0_9_rate")
+        child_risk = row.get("childhood_risk")
+        if pd.notna(asthma_val):
+            st.metric("Asthma Admissions (per 100k)", f"{asthma_val:.1f}")
+            st.metric("Childhood Risk Score", f"{child_risk:.3f}")
+        else:
+            st.info("No childhood asthma data available")
+
+    with col_elderly:
+        st.markdown("##### Elderly (85+ yrs)")
+        wm_85 = row.get("winter_mort_85_index")
+        elderly_risk = row.get("elderly_risk")
+        if pd.notna(wm_85):
+            st.metric("Winter Mortality Index (85+)", f"{wm_85:.1f}")
+            st.metric("Elderly Risk Score", f"{elderly_risk:.3f}")
+        else:
+            st.info("No elderly mortality data available")
+
+    both_high = (
+        pd.notna(child_risk) and child_risk >= 0.75
+        and pd.notna(elderly_risk) and elderly_risk >= 0.75
+    )
+    if both_high:
+        st.error("⚠️ **NHS Priority Borough** — both childhood and elderly risk scores are in the top quartile")
+    elif pd.notna(child_risk) and child_risk >= 0.75:
+        st.warning("High childhood respiratory risk — prioritise paediatric preparedness")
+    elif pd.notna(elderly_risk) and elderly_risk >= 0.75:
+        st.warning("High elderly mortality risk — prioritise geriatric and care home preparedness")
+
+    if age_data is not None and not age_data.empty:
+        borough_age = age_data[age_data["area_code"] == area_code]
+
+        asthma_ts = borough_age[
+            (borough_age["indicator_label"] == "asthma_admissions")
+            & (borough_age["age_group"] == "0-9 yrs")
+        ].sort_values("time_period_sortable")
+
+        wm_ts = borough_age[
+            borough_age["indicator_label"] == "winter_mortality_85plus"
+        ].sort_values("time_period_sortable")
+
+        if not asthma_ts.empty or not wm_ts.empty:
+            col_asthma_trend, col_wm_trend = st.columns(2)
+
+            with col_asthma_trend:
+                if not asthma_ts.empty:
+                    st.markdown("**Childhood Asthma Trend (0–9)**")
+                    chart = asthma_ts[["time_period", "value"]].rename(
+                        columns={"time_period": "Year", "value": "Rate per 100k"}
+                    ).dropna(subset=["Rate per 100k"])
+                    if not chart.empty:
+                        st.line_chart(chart.set_index("Year"))
+
+            with col_wm_trend:
+                if not wm_ts.empty:
+                    st.markdown("**Winter Mortality Trend (85+)**")
+                    chart = wm_ts[["time_period", "value"]].rename(
+                        columns={"time_period": "Winter", "value": "Mortality Index"}
+                    ).dropna(subset=["Mortality Index"])
+                    if not chart.empty:
+                        st.line_chart(chart.set_index("Winter"))
+
+
+def render_housing_section(housing_df, housing_ward_df, ward_geojson, housing_postcode_df):
     st.subheader("Housing Quality & Cold Vulnerability")
 
     if housing_df is None or housing_df.empty:
@@ -269,15 +387,6 @@ def render_housing_section(housing_df, housing_ward_df, ward_geojson):
                 if ward_code_key and "ward22nm" in ward_data.columns:
                     geo_ward_name_key = ward_code_key.replace("CD", "NM")
                     lad_code_key = ward_code_key.replace("WD", "LAD")
-                    borough_code = None
-                    for feat in ward_geojson["features"]:
-                        p = feat.get("properties", {})
-                        if p.get(lad_code_key, "").startswith("E09"):
-                            borough_code = p.get(lad_code_key)
-                            lad_name_key = lad_code_key.replace("CD", "NM")
-                            if p.get(lad_name_key) == selected_borough:
-                                break
-                            borough_code = None
 
                     geo_name_to_code = {}
                     for feat in ward_geojson["features"]:
@@ -326,6 +435,47 @@ def render_housing_section(housing_df, housing_ward_df, ward_geojson):
                 display_ward["% Uninsulated"] = display_ward["% Uninsulated"].round(1)
                 st.dataframe(display_ward, hide_index=True, height=400)
 
+            if housing_postcode_df is not None and not housing_postcode_df.empty:
+                st.markdown("**Postcode-Sector Drill-Down**")
+                pc_data = housing_postcode_df[
+                    housing_postcode_df["administrative_area"] == selected_borough
+                ].copy()
+                pc_data = pc_data.dropna(subset=["lat", "lon"])
+
+                if not pc_data.empty:
+                    fig_pc = px.scatter_map(
+                        pc_data,
+                        lat="lat",
+                        lon="lon",
+                        color="housing_quality_score",
+                        size="total_properties",
+                        color_continuous_scale="YlOrRd",
+                        hover_name="postcode_sector",
+                        hover_data={
+                            "housing_quality_score": ":.3f",
+                            "total_properties": True,
+                            "pct_epc_poor": ":.1f",
+                            "pct_uninsulated_walls": ":.1f",
+                            "lat": False,
+                            "lon": False,
+                        },
+                        map_style="carto-positron",
+                        center={"lat": pc_data["lat"].mean(), "lon": pc_data["lon"].mean()},
+                        zoom=12,
+                        opacity=0.8,
+                        size_max=20,
+                    )
+                    fig_pc.update_layout(
+                        margin={"r": 0, "t": 0, "l": 0, "b": 0},
+                        height=400,
+                        coloraxis_colorbar_title="Housing Score",
+                    )
+                    st.plotly_chart(fig_pc, config={"responsive": True})
+                    st.caption(
+                        f"{len(pc_data)} postcode sectors in {selected_borough} — "
+                        f"bubble size = number of properties, colour = housing vulnerability score"
+                    )
+
 
 def main():
     ensure_data()
@@ -350,8 +500,13 @@ def main():
     st.divider()
 
     # --- Vulnerability map + risk table ---
-    vuln, resp, copd_ts, geojson, housing, housing_ward, ward_geojson = load_data()
+    (vuln, resp, copd_ts, geojson, housing, housing_ward,
+     ward_geojson, housing_postcode, age_data, age_latest) = load_data()
     scored = compute_vulnerability_scores(vuln, resp, housing_df=housing)
+
+    if age_latest is not None and not age_latest.empty:
+        scored = compute_age_risk_scores(scored, age_latest)
+
     risk_df = build_risk_table(scored, severity)
 
     if prediction_df is not None and peak_multiplier > 0:
@@ -394,9 +549,17 @@ def main():
             display_cols.append("housing_quality_score")
             col_names.append("Housing Score")
 
+        has_age = "childhood_risk" in risk_df.columns and risk_df["childhood_risk"].notna().any()
+        if has_age:
+            display_cols.extend(["childhood_risk", "elderly_risk"])
+            col_names.extend(["Child Risk", "Elderly Risk"])
+
         display_df = risk_df[display_cols].copy()
         display_df.columns = col_names
         display_df["Vulnerability"] = display_df["Vulnerability"].round(3)
+        if has_age:
+            display_df["Child Risk"] = display_df["Child Risk"].round(3)
+            display_df["Elderly Risk"] = display_df["Elderly Risk"].round(3)
         st.dataframe(display_df, width="stretch", height=500, hide_index=True)
 
     st.divider()
@@ -448,23 +611,36 @@ def main():
             st.plotly_chart(fig_bar, config={"responsive": True})
 
         n_metrics = 5 if has_housing else 4
+        if has_age:
+            n_metrics += 2
         metric_cols = st.columns(n_metrics)
         metric_cols[0].metric("Vulnerability Score", f"{row['vulnerability_score']:.3f}")
         metric_cols[1].metric("IMD Score", f"{row['imd_score']:.1f}")
         metric_cols[2].metric("Fuel Poverty", f"{row['fuel_poverty_pct']:.1f}%")
         copd_val = f"{row['copd_rate']:.1f}" if pd.notna(row['copd_rate']) else "N/A"
         metric_cols[3].metric("COPD Rate (per 100k)", copd_val)
+        idx = 4
         if has_housing and pd.notna(row.get("housing_quality_score")):
-            metric_cols[4].metric("Housing Quality", f"{row['housing_quality_score']:.3f}")
+            metric_cols[idx].metric("Housing Quality", f"{row['housing_quality_score']:.3f}")
+            idx += 1
+        if has_age:
+            child_val = f"{row['childhood_risk']:.3f}" if pd.notna(row.get("childhood_risk")) else "N/A"
+            elderly_val = f"{row['elderly_risk']:.3f}" if pd.notna(row.get("elderly_risk")) else "N/A"
+            metric_cols[idx].metric("Child Risk", child_val)
+            metric_cols[idx + 1].metric("Elderly Risk", elderly_val)
+
+        if has_age:
+            st.markdown("---")
+            render_age_risk_section(selected, risk_df, age_data, age_latest)
 
     st.divider()
 
     # --- Housing section ---
-    render_housing_section(housing, housing_ward, ward_geojson)
+    render_housing_section(housing, housing_ward, ward_geojson, housing_postcode)
 
     st.divider()
     st.caption(
-        "Data sources: OHID Fingertips (respiratory admissions), MHCLG IoD2025 (deprivation), "
+        "Data sources: OHID Fingertips (respiratory admissions, winter mortality), MHCLG IoD2025 (deprivation), "
         "Fingertips (fuel poverty), UKHSA (cold alerts), Open-Meteo (weather forecast & reanalysis), "
         "GLA London Building Stock Model v2 (housing). "
         "Built for the Health in Climate London 2026 Hackathon."

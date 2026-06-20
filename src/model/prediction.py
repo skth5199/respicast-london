@@ -31,6 +31,46 @@ def predict_respiratory_risk(forecast_df):
     return df
 
 
+def _date_to_winter_year(dt):
+    if dt.month >= 8:
+        return f"Aug {dt.year} - Jul {dt.year + 1}"
+    else:
+        return f"Aug {dt.year - 1} - Jul {dt.year}"
+
+
+def enrich_analogues_with_outcomes(analogues, winter_mortality_df):
+    if winter_mortality_df is None or winter_mortality_df.empty:
+        return analogues
+
+    wm_all = winter_mortality_df[winter_mortality_df["indicator_label"] == "winter_mortality_all"]
+    wm_85 = winter_mortality_df[winter_mortality_df["indicator_label"] == "winter_mortality_85plus"]
+
+    avg_all = wm_all["value"].mean()
+    avg_85 = wm_85["value"].mean()
+
+    for a in analogues:
+        wy = a.get("winter_year", "")
+
+        match_all = wm_all[wm_all["time_period"] == wy]
+        if not match_all.empty:
+            val = match_all["value"].mean()
+            a["winter_mortality_all"] = round(val, 1)
+            a["winter_mortality_all_avg"] = round(avg_all, 1)
+            a["winter_mortality_pct_above"] = round(((val - avg_all) / avg_all) * 100, 1) if avg_all else None
+        else:
+            a["winter_mortality_all"] = None
+
+        match_85 = wm_85[wm_85["time_period"] == wy]
+        if not match_85.empty:
+            val85 = match_85["value"].mean()
+            a["winter_mortality_85plus"] = round(val85, 1)
+            a["winter_mortality_85plus_avg"] = round(avg_85, 1)
+        else:
+            a["winter_mortality_85plus"] = None
+
+    return analogues
+
+
 def find_historical_analogues(forecast_df, historical_df, n=3):
     forecast_temps = forecast_df["temp_min"].values[:7]
     if len(forecast_temps) < 7:
@@ -48,10 +88,13 @@ def find_historical_analogues(forecast_df, historical_df, n=3):
         dist = np.sqrt(np.sum((forecast_temps - window) ** 2))
         following = hist_temps[i + 7:i + 14]
         following_dates = hist_dates[i + 7:i + 14]
+        start_date = pd.Timestamp(hist_dates[i])
+        winter_year = _date_to_winter_year(start_date)
         best.append({
             "distance": dist,
             "start_date": str(hist_dates[i])[:10],
             "end_date": str(hist_dates[i + 6])[:10],
+            "winter_year": winter_year,
             "temps": window.tolist(),
             "following_min_temp": float(np.nanmin(following)) if len(following) > 0 else None,
             "following_avg_temp": float(np.nanmean(following)) if len(following) > 0 else None,
