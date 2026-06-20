@@ -685,19 +685,31 @@ Scale: Good (< 0.25) · Fair (0.25–0.50) · Poor (0.50–0.75) · Very Poor (>
             "will reflect the combined weather + vulnerability signal."
         )
 
-    map_mode = "Current Vulnerability"
+    map_mode = "Baseline Vulnerability"
     if prediction_df is not None and peak_multiplier > 0:
+        peak_date = prediction_df.loc[prediction_df["cold_multiplier"].idxmax(), "date"]
+        peak_label = peak_date.strftime("%a %d %b") if hasattr(peak_date, "strftime") else str(peak_date)[:10]
         map_mode = st.radio(
             "Map view",
-            ["Current Vulnerability", "Predicted Risk (peak day)"],
+            [
+                "Baseline Vulnerability",
+                f"Predicted Risk — coldest day ({peak_label})",
+            ],
             horizontal=True,
+            help=(
+                "**Baseline Vulnerability** shows each borough's underlying vulnerability "
+                "score (deprivation, fuel poverty, COPD, housing) — this doesn't change with weather. "
+                f"**Predicted Risk** multiplies vulnerability by the peak cold severity "
+                f"from the 7-day forecast, showing which boroughs face the highest risk "
+                f"on the coldest upcoming day."
+            ),
         )
 
     col_map, col_table = st.columns([3, 2])
 
     with col_map:
         st.subheader("Borough Vulnerability Map")
-        if map_mode == "Predicted Risk (peak day)" and "predicted_risk_score" in risk_df.columns:
+        if map_mode.startswith("Predicted Risk") and "predicted_risk_score" in risk_df.columns:
             fig = render_map(risk_df, geojson, color_col="predicted_risk_score", title="Predicted Risk")
         else:
             fig = render_map(risk_df, geojson)
