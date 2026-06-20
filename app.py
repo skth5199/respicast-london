@@ -7,7 +7,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-from src.data.fetch_cold_alert import get_london_cold_alert, alert_severity
+from src.data.fetch_cold_alert import get_london_cold_alert, alert_severity, simulate_cold_alert
+from src.data.fetch_weather_forecast import fetch_historical_window
+from src.model.prediction import predict_respiratory_risk, find_historical_analogues, enrich_analogues_with_outcomes
 from src.model.vulnerability import compute_vulnerability_scores, build_risk_table, compute_age_risk_scores
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -595,8 +597,6 @@ def main():
 
     if is_simulating:
         st.info(f"Simulating: **{sim_date.strftime('%d %B %Y')}** — dashboard shows historical weather data for this date.")
-        from src.data.fetch_weather_forecast import fetch_historical_window
-        from src.data.fetch_cold_alert import simulate_cold_alert
         try:
             sim_forecast_df = fetch_historical_window(sim_date)
             alert = simulate_cold_alert(sim_forecast_df["temp_min"].iloc[0], sim_date.isoformat())
@@ -613,7 +613,6 @@ def main():
     # --- Forecast section ---
     try:
         if is_simulating:
-            from src.model.prediction import predict_respiratory_risk, find_historical_analogues, enrich_analogues_with_outcomes
             prediction_df = predict_respiratory_risk(sim_forecast_df)
             hist_df = pd.read_csv(os.path.join(DATA_DIR, "weather_historical_winters.csv"), parse_dates=["date"])
             analogues = find_historical_analogues(sim_forecast_df, hist_df, n=3)
