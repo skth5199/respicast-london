@@ -30,7 +30,7 @@ Built for the **Health in Climate London 2026 Hackathon**.
 
 ```bash
 pip install -r requirements.txt
-streamlit run src/app.py
+streamlit run app.py
 ```
 
 Data is fetched automatically on first run. The housing data fetch takes several minutes (33 borough CSVs, 5–97 MB each).
@@ -49,7 +49,7 @@ python -m src.data.fetch_housing
 
 1. Push this repo to GitHub
 2. Go to [share.streamlit.io](https://share.streamlit.io)
-3. Connect the repo, set main file to `src/app.py`
+3. Connect the repo, set main file to `app.py`
 4. Deploy
 
 ## Vulnerability Model

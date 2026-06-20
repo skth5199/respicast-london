@@ -9,7 +9,7 @@ import streamlit as st
 from src.data.fetch_cold_alert import get_london_cold_alert, alert_severity
 from src.model.vulnerability import compute_vulnerability_scores, build_risk_table
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 ALERT_COLOURS = {
     "Green": "#2e7d32",
