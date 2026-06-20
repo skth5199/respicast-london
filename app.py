@@ -54,8 +54,8 @@ def ensure_data():
             from src.data.fetch_boundaries import fetch_london_geojson
             fetch_london_geojson()
         if "ward_boundaries" in missing_extra:
-            from src.data.fetch_ward_boundaries import fetch_and_save as fetch_wards
-            fetch_wards()
+            from src.data.fetch_ward_boundaries import fetch_london_ward_geojson
+            fetch_london_ward_geojson()
         if "age_respiratory" in missing_extra:
             from src.data.fetch_age_respiratory import fetch_and_save as fetch_age
             fetch_age()
