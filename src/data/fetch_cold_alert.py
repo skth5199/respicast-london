@@ -23,6 +23,18 @@ def get_london_cold_alert():
     return {"status": "Unknown", "refresh_date": "", "geography_name": "London"}
 
 
+def simulate_cold_alert(temp_min, sim_date_str):
+    if temp_min > 6:
+        status = "Green"
+    elif temp_min > 2:
+        status = "Yellow"
+    elif temp_min > -2:
+        status = "Amber"
+    else:
+        status = "Red"
+    return {"status": status, "refresh_date": sim_date_str, "geography_name": "London (simulated)"}
+
+
 def alert_severity(status):
     return SEVERITY_MAP.get(status, 0)
 

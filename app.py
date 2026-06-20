@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import pandas as pd
@@ -573,13 +574,56 @@ def main():
     st.title("RespiCast London")
     st.caption("Borough-level respiratory risk warnings for NHS planners")
 
-    alert = get_london_cold_alert()
+    # --- Date simulation selector ---
+    today = datetime.date.today()
+    col_date, col_reset, col_spacer = st.columns([2, 1, 5])
+    with col_date:
+        sim_date = st.date_input(
+            "Simulate date",
+            value=today,
+            min_value=datetime.date(2015, 1, 1),
+            max_value=today,
+            help="Pick a past date to see what the dashboard would show on that day. Try a winter date like 2018-02-28 (Beast from the East).",
+        )
+    with col_reset:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("Reset to today"):
+            st.query_params.clear()
+            st.rerun()
+
+    is_simulating = sim_date != today
+
+    if is_simulating:
+        st.info(f"Simulating: **{sim_date.strftime('%d %B %Y')}** — dashboard shows historical weather data for this date.")
+        from src.data.fetch_weather_forecast import fetch_historical_window
+        from src.data.fetch_cold_alert import simulate_cold_alert
+        try:
+            sim_forecast_df = fetch_historical_window(sim_date)
+            alert = simulate_cold_alert(sim_forecast_df["temp_min"].iloc[0], sim_date.isoformat())
+        except Exception as e:
+            st.warning(f"Could not fetch historical weather for {sim_date}: {e}. Falling back to live data.")
+            alert = get_london_cold_alert()
+            is_simulating = False
+    else:
+        alert = get_london_cold_alert()
+
     render_alert_banner(alert)
     severity = alert_severity(alert["status"])
 
     # --- Forecast section ---
     try:
-        prediction_df, analogues = load_forecast()
+        if is_simulating:
+            from src.model.prediction import predict_respiratory_risk, find_historical_analogues, enrich_analogues_with_outcomes
+            prediction_df = predict_respiratory_risk(sim_forecast_df)
+            hist_df = pd.read_csv(os.path.join(DATA_DIR, "weather_historical_winters.csv"), parse_dates=["date"])
+            analogues = find_historical_analogues(sim_forecast_df, hist_df, n=3)
+            wm_path = os.path.join(DATA_DIR, "respiratory_age_borough.csv")
+            if os.path.exists(wm_path):
+                wm_df = pd.read_csv(wm_path)
+                wm_london = wm_df[wm_df["indicator_label"] == "winter_mortality_all"]
+                analogues = enrich_analogues_with_outcomes(analogues, wm_london)
+        else:
+            prediction_df, analogues = load_forecast()
         render_forecast_section(prediction_df, analogues)
         peak_multiplier = prediction_df["cold_multiplier"].max()
     except Exception as e:
