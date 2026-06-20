@@ -21,7 +21,62 @@ ALERT_COLOURS = {
 
 RISK_COLOURS = {"Green": "#2e7d32", "Yellow": "#f9a825", "Amber": "#ef6c00", "Red": "#c62828"}
 
+FORMULA_VULN = (
+    "Vulnerability = 0.30 × Deprivation + 0.25 × Fuel Poverty "
+    "+ 0.25 × COPD Rate + 0.20 × Housing Quality. "
+    "Each component is min-max normalised across London boroughs (0 = lowest, 1 = highest)."
+)
+FORMULA_VULN_NO_HOUSING = (
+    "Vulnerability = 0.40 × Deprivation + 0.30 × Fuel Poverty "
+    "+ 0.30 × COPD Rate. "
+    "Each component is min-max normalised across London boroughs (0 = lowest, 1 = highest)."
+)
+FORMULA_HOUSING = (
+    "Housing Score = 0.40 × Poor EPC (E/F/G) + 0.30 × Uninsulated Walls "
+    "+ 0.15 × Single Glazing + 0.15 × No Central Heating. Higher = worse housing stock."
+)
+FORMULA_CHILD_RISK = (
+    "Childhood Risk = min-max normalised asthma admission rate (ages 0–9) "
+    "across London boroughs. 0 = lowest borough, 1 = highest."
+)
+FORMULA_ELDERLY_RISK = (
+    "Elderly Risk = 0.50 × COPD rate (normalised) + 0.50 × Winter Mortality 85+ (normalised). "
+    "Combines chronic respiratory disease burden with cold-weather mortality for the elderly."
+)
+FORMULA_RISK_LEVEL = (
+    "Risk Level = Vulnerability Score × Cold Alert Severity "
+    "(Green=0, Yellow=1, Amber=2, Red=3). "
+    "Result: ≤0 Low, ≤1 Moderate, ≤2 High, >2 Very High."
+)
+FORMULA_COLD_MULT = (
+    "Daily cold risk: >6°C = Green (no risk), 2–6°C = Yellow (low), "
+    "-2–2°C = Amber (moderate), <-2°C = Red (high). Based on UKHSA thresholds."
+)
+FORMULA_PREDICTED_RISK = (
+    "Predicted risk uses lag-weighted cold multipliers over 8 days "
+    "(weights: 0, 0, 0, 0.10, 0.20, 0.30, 0.25, 0.15), "
+    "reflecting the 3–7 day delay between cold exposure and respiratory admissions."
+)
+
 st.set_page_config(page_title="RespiCast London", layout="wide", page_icon="🫁")
+
+
+def _score_label(score, labels=("Low", "Moderate", "High", "Very High")):
+    if pd.isna(score):
+        return "N/A"
+    if score < 0.25:
+        return labels[0]
+    if score < 0.50:
+        return labels[1]
+    if score < 0.75:
+        return labels[2]
+    return labels[3]
+
+
+def _borough_rank(value, series):
+    rank = int((series.dropna() >= value).sum())
+    total = int(series.dropna().count())
+    return f"Rank {rank} of {total}"
 
 
 def ensure_data():
@@ -169,6 +224,8 @@ def render_forecast_section(prediction_df, analogues):
                 unsafe_allow_html=True,
             )
 
+    st.caption(FORMULA_COLD_MULT)
+
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
     fig.add_trace(
@@ -204,6 +261,7 @@ def render_forecast_section(prediction_df, analogues):
     fig.update_yaxes(title_text="Temperature (°C)", secondary_y=True)
 
     st.plotly_chart(fig, config={"responsive": True})
+    st.caption(FORMULA_PREDICTED_RISK)
 
     if analogues:
         with st.expander("Historical Analogues — similar past weather patterns & hospital outcomes"):
@@ -240,6 +298,16 @@ def render_forecast_section(prediction_df, analogues):
 
 
 def render_map(risk_df, geojson, color_col="vulnerability_score", title="Vulnerability"):
+    hover = {
+        "vulnerability_score": ":.2f",
+        "vuln_rating": True,
+        "risk_level": True,
+        "area_code": False,
+        color_col: ":.2f",
+    }
+    if "vuln_rating" not in risk_df.columns:
+        hover.pop("vuln_rating", None)
+
     fig = px.choropleth_map(
         risk_df,
         geojson=geojson,
@@ -249,12 +317,7 @@ def render_map(risk_df, geojson, color_col="vulnerability_score", title="Vulnera
         color_continuous_scale="YlOrRd",
         range_color=[0, risk_df[color_col].max() if risk_df[color_col].max() > 0 else 1],
         hover_name="area_name",
-        hover_data={
-            "vulnerability_score": ":.2f",
-            "risk_level": True,
-            "area_code": False,
-            color_col: ":.2f",
-        },
+        hover_data=hover,
         map_style="carto-positron",
         center={"lat": 51.5, "lon": -0.1},
         zoom=9,
@@ -282,7 +345,13 @@ def render_age_risk_section(selected, risk_df, age_data, age_latest):
         child_risk = row.get("childhood_risk")
         if pd.notna(asthma_val):
             st.metric("Asthma Admissions (per 100k)", f"{asthma_val:.1f}")
-            st.metric("Childhood Risk Score", f"{child_risk:.3f}")
+            st.metric(
+                "Childhood Risk Score",
+                f"{child_risk:.3f} ({_score_label(child_risk)})",
+                delta=_borough_rank(child_risk, risk_df["childhood_risk"]),
+                delta_color="off",
+                help=FORMULA_CHILD_RISK,
+            )
         else:
             st.info("No childhood asthma data available")
 
@@ -292,7 +361,13 @@ def render_age_risk_section(selected, risk_df, age_data, age_latest):
         elderly_risk = row.get("elderly_risk")
         if pd.notna(wm_85):
             st.metric("Winter Mortality Index (85+)", f"{wm_85:.1f}")
-            st.metric("Elderly Risk Score", f"{elderly_risk:.3f}")
+            st.metric(
+                "Elderly Risk Score",
+                f"{elderly_risk:.3f} ({_score_label(elderly_risk)})",
+                delta=_borough_rank(elderly_risk, risk_df["elderly_risk"]),
+                delta_color="off",
+                help=FORMULA_ELDERLY_RISK,
+            )
         else:
             st.info("No elderly mortality data available")
 
@@ -348,6 +423,8 @@ def render_housing_section(housing_df, housing_ward_df, ward_geojson, housing_po
         st.warning("Housing data not yet available. Run `python -m src.data.fetch_housing` to fetch LBSM data.")
         return
 
+    st.caption(FORMULA_HOUSING)
+
     col_chart, col_stats = st.columns([3, 2])
 
     with col_chart:
@@ -379,6 +456,7 @@ def render_housing_section(housing_df, housing_ward_df, ward_geojson, housing_po
         worst = housing_df.nlargest(5, "housing_quality_score")[["administrative_area", "housing_quality_score"]]
         worst.columns = ["Borough", "Score"]
         worst["Score"] = worst["Score"].round(3)
+        worst["Rating"] = worst["Score"].apply(lambda s: _score_label(s, ("Good", "Fair", "Poor", "Very Poor")))
         st.markdown("**Most vulnerable housing stock**")
         st.dataframe(worst, hide_index=True)
 
@@ -529,6 +607,39 @@ def main():
     if prediction_df is not None and peak_multiplier > 0:
         risk_df["predicted_risk_score"] = risk_df["vulnerability_score"] * peak_multiplier
 
+    has_housing = housing is not None and "housing_quality_score" in risk_df.columns and risk_df["housing_quality_score"].notna().any()
+    has_age = "childhood_risk" in risk_df.columns and risk_df["childhood_risk"].notna().any()
+
+    risk_df["vuln_rating"] = risk_df["vulnerability_score"].apply(_score_label)
+
+    # --- Methodology expander ---
+    with st.expander("How scores are computed"):
+        vuln_formula = FORMULA_VULN if has_housing else FORMULA_VULN_NO_HOUSING
+        st.markdown(f"""
+**Vulnerability Score** (0–1 scale)
+{vuln_formula}
+Scale: Low (< 0.25) · Moderate (0.25–0.50) · High (0.50–0.75) · Very High (> 0.75)
+
+**Risk Level**
+{FORMULA_RISK_LEVEL}
+
+**Housing Quality Score** (0–1 scale)
+{FORMULA_HOUSING}
+Scale: Good (< 0.25) · Fair (0.25–0.50) · Poor (0.50–0.75) · Very Poor (> 0.75)
+
+**Childhood Risk** (0–1 scale)
+{FORMULA_CHILD_RISK}
+
+**Elderly Risk** (0–1 scale)
+{FORMULA_ELDERLY_RISK}
+
+**Daily Cold Risk**
+{FORMULA_COLD_MULT}
+
+**Predicted Respiratory Risk** (0–3 scale)
+{FORMULA_PREDICTED_RISK}
+        """)
+
     if severity == 0 and peak_multiplier == 0:
         st.info(
             "Cold alert is currently **Green** and forecast shows no cold risk. "
@@ -556,17 +667,17 @@ def main():
 
     with col_table:
         st.subheader("Risk Rankings")
+        st.caption(FORMULA_VULN if has_housing else FORMULA_VULN_NO_HOUSING)
+
         display_cols = ["area_name", "vulnerability_score", "risk_level",
                         "imd_score", "fuel_poverty_pct", "copd_rate"]
         col_names = ["Borough", "Vulnerability", "Risk Level",
                      "IMD Score", "Fuel Poverty %", "COPD Rate"]
 
-        has_housing = housing is not None and "housing_quality_score" in risk_df.columns
-        if has_housing and risk_df["housing_quality_score"].notna().any():
+        if has_housing:
             display_cols.append("housing_quality_score")
             col_names.append("Housing Score")
 
-        has_age = "childhood_risk" in risk_df.columns and risk_df["childhood_risk"].notna().any()
         if has_age:
             display_cols.extend(["childhood_risk", "elderly_risk"])
             col_names.extend(["Child Risk", "Elderly Risk"])
@@ -574,6 +685,8 @@ def main():
         display_df = risk_df[display_cols].copy()
         display_df.columns = col_names
         display_df["Vulnerability"] = display_df["Vulnerability"].round(3)
+        display_df.insert(2, "Rating", display_df["Vulnerability"].apply(_score_label))
+        display_df.insert(3, "Rank", range(1, len(display_df) + 1))
         if has_age:
             display_df["Child Risk"] = display_df["Child Risk"].round(3)
             display_df["Elderly Risk"] = display_df["Elderly Risk"].round(3)
@@ -604,6 +717,7 @@ def main():
 
         with col_breakdown:
             st.markdown(f"**Vulnerability Components — {selected}**")
+            st.caption("Each component normalised 0–1 across boroughs, then weighted. Bar height = score × weight.")
             components = [
                 {"Component": "IMD Deprivation", "Score": row["imd_norm"], "Weight": 0.30 if has_housing else 0.40},
                 {"Component": "Fuel Poverty", "Score": row["fp_norm"], "Weight": 0.25 if has_housing else 0.30},
@@ -627,24 +741,59 @@ def main():
             )
             st.plotly_chart(fig_bar, config={"responsive": True})
 
+        vuln_score = row["vulnerability_score"]
         n_metrics = 5 if has_housing else 4
         if has_age:
             n_metrics += 2
         metric_cols = st.columns(n_metrics)
-        metric_cols[0].metric("Vulnerability Score", f"{row['vulnerability_score']:.3f}")
-        metric_cols[1].metric("IMD Score", f"{row['imd_score']:.1f}")
-        metric_cols[2].metric("Fuel Poverty", f"{row['fuel_poverty_pct']:.1f}%")
+        metric_cols[0].metric(
+            "Vulnerability Score",
+            f"{vuln_score:.3f} ({_score_label(vuln_score)})",
+            delta=_borough_rank(vuln_score, risk_df["vulnerability_score"]),
+            delta_color="off",
+            help=FORMULA_VULN if has_housing else FORMULA_VULN_NO_HOUSING,
+        )
+        metric_cols[1].metric("IMD Score", f"{row['imd_score']:.1f}",
+                              help="Index of Multiple Deprivation — higher = more deprived. Source: MHCLG IoD2025.")
+        metric_cols[2].metric("Fuel Poverty", f"{row['fuel_poverty_pct']:.1f}%",
+                              help="% of households in fuel poverty. Source: OHID Fingertips.")
         copd_val = f"{row['copd_rate']:.1f}" if pd.notna(row['copd_rate']) else "N/A"
-        metric_cols[3].metric("COPD Rate (per 100k)", copd_val)
+        metric_cols[3].metric("COPD Rate (per 100k)", copd_val,
+                              help="COPD emergency admissions per 100,000 population. Source: OHID Fingertips.")
         idx = 4
         if has_housing and pd.notna(row.get("housing_quality_score")):
-            metric_cols[idx].metric("Housing Quality", f"{row['housing_quality_score']:.3f}")
+            h_score = row["housing_quality_score"]
+            metric_cols[idx].metric(
+                "Housing Quality",
+                f"{h_score:.3f} ({_score_label(h_score, ('Good', 'Fair', 'Poor', 'Very Poor'))})",
+                delta=_borough_rank(h_score, risk_df["housing_quality_score"]),
+                delta_color="off",
+                help=FORMULA_HOUSING,
+            )
             idx += 1
         if has_age:
-            child_val = f"{row['childhood_risk']:.3f}" if pd.notna(row.get("childhood_risk")) else "N/A"
-            elderly_val = f"{row['elderly_risk']:.3f}" if pd.notna(row.get("elderly_risk")) else "N/A"
-            metric_cols[idx].metric("Child Risk", child_val)
-            metric_cols[idx + 1].metric("Elderly Risk", elderly_val)
+            child_risk = row.get("childhood_risk")
+            elderly_risk = row.get("elderly_risk")
+            if pd.notna(child_risk):
+                metric_cols[idx].metric(
+                    "Child Risk",
+                    f"{child_risk:.3f} ({_score_label(child_risk)})",
+                    delta=_borough_rank(child_risk, risk_df["childhood_risk"]),
+                    delta_color="off",
+                    help=FORMULA_CHILD_RISK,
+                )
+            else:
+                metric_cols[idx].metric("Child Risk", "N/A")
+            if pd.notna(elderly_risk):
+                metric_cols[idx + 1].metric(
+                    "Elderly Risk",
+                    f"{elderly_risk:.3f} ({_score_label(elderly_risk)})",
+                    delta=_borough_rank(elderly_risk, risk_df["elderly_risk"]),
+                    delta_color="off",
+                    help=FORMULA_ELDERLY_RISK,
+                )
+            else:
+                metric_cols[idx + 1].metric("Elderly Risk", "N/A")
 
         if has_age:
             st.markdown("---")
