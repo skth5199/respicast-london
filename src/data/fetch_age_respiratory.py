@@ -11,7 +11,6 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
 INDICATORS = {
     90810: "asthma_admissions",
     90360: "winter_mortality_all",
-    90361: "winter_mortality_85plus",
 }
 
 

@@ -43,10 +43,8 @@ def enrich_analogues_with_outcomes(analogues, winter_mortality_df):
         return analogues
 
     wm_all = winter_mortality_df[winter_mortality_df["indicator_label"] == "winter_mortality_all"]
-    wm_85 = winter_mortality_df[winter_mortality_df["indicator_label"] == "winter_mortality_85plus"]
 
     avg_all = wm_all["value"].mean()
-    avg_85 = wm_85["value"].mean()
 
     for a in analogues:
         wy = a.get("winter_year", "")
@@ -59,14 +57,6 @@ def enrich_analogues_with_outcomes(analogues, winter_mortality_df):
             a["winter_mortality_pct_above"] = round(((val - avg_all) / avg_all) * 100, 1) if avg_all else None
         else:
             a["winter_mortality_all"] = None
-
-        match_85 = wm_85[wm_85["time_period"] == wy]
-        if not match_85.empty:
-            val85 = match_85["value"].mean()
-            a["winter_mortality_85plus"] = round(val85, 1)
-            a["winter_mortality_85plus_avg"] = round(avg_85, 1)
-        else:
-            a["winter_mortality_85plus"] = None
 
     return analogues
 

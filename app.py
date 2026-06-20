@@ -40,8 +40,8 @@ FORMULA_CHILD_RISK = (
     "across London boroughs. 0 = lowest borough, 1 = highest."
 )
 FORMULA_ELDERLY_RISK = (
-    "Elderly Risk = 0.50 × COPD rate (normalised) + 0.50 × Winter Mortality 85+ (normalised). "
-    "Combines chronic respiratory disease burden with cold-weather mortality for the elderly."
+    "Elderly Risk = 0.50 × COPD rate (normalised) + 0.50 × Winter Mortality Index (normalised). "
+    "Combines chronic respiratory disease burden with cold-weather mortality for the 65+ population."
 )
 FORMULA_RISK_LEVEL = (
     "Risk Level = Vulnerability Score × Cold Alert Severity "
@@ -183,7 +183,7 @@ def load_forecast():
     wm_path = os.path.join(DATA_DIR, "respiratory_age_borough.csv")
     if os.path.exists(wm_path):
         wm_df = pd.read_csv(wm_path)
-        wm_london = wm_df[wm_df["indicator_label"].isin(["winter_mortality_all", "winter_mortality_85plus"])]
+        wm_london = wm_df[wm_df["indicator_label"] == "winter_mortality_all"]
         analogues = enrich_analogues_with_outcomes(analogues, wm_london)
 
     return prediction_df, analogues
@@ -274,20 +274,14 @@ def render_forecast_section(prediction_df, analogues):
                 )
 
                 wm_all = a.get("winter_mortality_all")
-                wm_85 = a.get("winter_mortality_85plus")
-                if wm_all is not None or wm_85 is not None:
+                if wm_all is not None:
                     wy = a.get("winter_year", "Unknown")
-                    parts = []
-                    if wm_all is not None:
-                        avg_all = a.get("winter_mortality_all_avg")
-                        pct = a.get("winter_mortality_pct_above")
-                        severity = "above" if pct and pct > 0 else "below"
-                        parts.append(f"Winter mortality index: **{wm_all}** (London avg: {avg_all})")
-                        if pct is not None:
-                            parts.append(f"**{abs(pct):.1f}% {severity}** average")
-                    if wm_85 is not None:
-                        avg_85 = a.get("winter_mortality_85plus_avg")
-                        parts.append(f"85+ mortality index: **{wm_85}** (avg: {avg_85})")
+                    avg_all = a.get("winter_mortality_all_avg")
+                    pct = a.get("winter_mortality_pct_above")
+                    severity = "above" if pct and pct > 0 else "below"
+                    parts = [f"Winter mortality index: **{wm_all}** (London avg: {avg_all})"]
+                    if pct is not None:
+                        parts.append(f"**{abs(pct):.1f}% {severity}** average")
                     st.markdown(
                         f"&nbsp;&nbsp;&nbsp;&nbsp;📊 *Winter {wy}*: " + " | ".join(parts)
                     )
@@ -356,11 +350,11 @@ def render_age_risk_section(selected, risk_df, age_data, age_latest):
             st.info("No childhood asthma data available")
 
     with col_elderly:
-        st.markdown("##### Elderly (85+ yrs)")
-        wm_85 = row.get("winter_mort_85_index")
+        st.markdown("##### Elderly (65+ yrs)")
+        wm_val = row.get("winter_mort_index")
         elderly_risk = row.get("elderly_risk")
-        if pd.notna(wm_85):
-            st.metric("Winter Mortality Index (85+)", f"{wm_85:.1f}")
+        if pd.notna(wm_val):
+            st.metric("Winter Mortality Index", f"{wm_val:.1f}")
             st.metric(
                 "Elderly Risk Score",
                 f"{elderly_risk:.3f} ({_score_label(elderly_risk)})",
@@ -391,7 +385,7 @@ def render_age_risk_section(selected, risk_df, age_data, age_latest):
         ].sort_values("time_period_sortable")
 
         wm_ts = borough_age[
-            borough_age["indicator_label"] == "winter_mortality_85plus"
+            borough_age["indicator_label"] == "winter_mortality_all"
         ].sort_values("time_period_sortable")
 
         if not asthma_ts.empty or not wm_ts.empty:
@@ -408,7 +402,7 @@ def render_age_risk_section(selected, risk_df, age_data, age_latest):
 
             with col_wm_trend:
                 if not wm_ts.empty:
-                    st.markdown("**Winter Mortality Trend (85+)**")
+                    st.markdown("**Winter Mortality Trend (65+)**")
                     chart = wm_ts[["time_period", "value"]].rename(
                         columns={"time_period": "Winter", "value": "Mortality Index"}
                     ).dropna(subset=["Mortality Index"])
