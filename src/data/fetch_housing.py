@@ -115,12 +115,20 @@ def _aggregate_postcode(df):
     return agg
 
 
-def _compute_housing_score(df):
+def _compute_housing_score(df, fuel_poverty_pct=None):
     epc_n = _min_max_normalise(df["pct_epc_poor"])
     wall_n = _min_max_normalise(df["pct_uninsulated_walls"])
     glaz_n = _min_max_normalise(df["pct_single_glazing"])
     heat_n = _min_max_normalise(df["pct_no_central_heating"])
-    df["housing_quality_score"] = 0.4 * epc_n + 0.3 * wall_n + 0.15 * glaz_n + 0.15 * heat_n
+    df["building_fabric_score"] = 0.4 * epc_n + 0.3 * wall_n + 0.15 * glaz_n + 0.15 * heat_n
+    if fuel_poverty_pct is not None:
+        fp_n = _min_max_normalise(fuel_poverty_pct)
+        df["housing_quality_score"] = (
+            0.25 * epc_n + 0.20 * wall_n + 0.10 * glaz_n
+            + 0.10 * heat_n + 0.35 * fp_n
+        )
+    else:
+        df["housing_quality_score"] = df["building_fabric_score"]
     return df
 
 
@@ -177,7 +185,17 @@ def fetch_and_save():
             continue
 
     borough_df = pd.concat(borough_rows, ignore_index=True)
-    borough_df = _compute_housing_score(borough_df)
+    vuln_path = os.path.join(DATA_DIR, "vulnerability_inputs.csv")
+    fp_series = None
+    if os.path.exists(vuln_path):
+        vuln = pd.read_csv(vuln_path)
+        borough_df = borough_df.merge(
+            vuln[["area_name", "fuel_poverty_pct"]],
+            left_on="administrative_area", right_on="area_name", how="left",
+        ).drop(columns=["area_name"])
+        borough_df["fuel_poverty_pct"] = pd.to_numeric(borough_df["fuel_poverty_pct"], errors="coerce")
+        fp_series = borough_df["fuel_poverty_pct"]
+    borough_df = _compute_housing_score(borough_df, fuel_poverty_pct=fp_series)
     borough_path = os.path.join(DATA_DIR, "housing_borough.csv")
     borough_df.to_csv(borough_path, index=False)
     print(f"\nSaved borough housing data: {len(borough_df)} boroughs to {borough_path}")

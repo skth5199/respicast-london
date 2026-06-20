@@ -32,8 +32,9 @@ FORMULA_VULN_NO_HOUSING = (
     "Each component is min-max normalised across London boroughs (0 = lowest, 1 = highest)."
 )
 FORMULA_HOUSING = (
-    "Housing Score = 0.40 × Poor EPC (E/F/G) + 0.30 × Uninsulated Walls "
-    "+ 0.15 × Single Glazing + 0.15 × No Central Heating. Higher = worse housing stock."
+    "Housing Cold Vulnerability = 0.25 × Poor EPC + 0.20 × Uninsulated Walls "
+    "+ 0.10 × Single Glazing + 0.10 × No Central Heating + 0.35 × Fuel Poverty. "
+    "Combines building fabric quality with ability to heat — higher = more vulnerable."
 )
 FORMULA_CHILD_RISK = (
     "Childhood Risk = min-max normalised asthma admission rate (ages 0–9) "
@@ -430,7 +431,7 @@ def render_housing_section(housing_df, housing_ward_df, ward_geojson, housing_po
             orientation="h",
             color="housing_quality_score",
             color_continuous_scale="YlOrRd",
-            labels={"housing_quality_score": "Housing Quality Score", "administrative_area": "Borough"},
+            labels={"housing_quality_score": "Housing Cold Vulnerability", "administrative_area": "Borough"},
         )
         fig.update_layout(
             height=700, margin={"t": 10, "l": 0, "r": 0, "b": 0},
@@ -617,7 +618,7 @@ Scale: Low (< 0.25) · Moderate (0.25–0.50) · High (0.50–0.75) · Very High
 **Risk Level**
 {FORMULA_RISK_LEVEL}
 
-**Housing Quality Score** (0–1 scale)
+**Housing Cold Vulnerability** (0–1 scale)
 {FORMULA_HOUSING}
 Scale: Good (< 0.25) · Fair (0.25–0.50) · Poor (0.50–0.75) · Very Poor (> 0.75)
 
