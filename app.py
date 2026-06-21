@@ -3,8 +3,6 @@ import json
 import os
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import streamlit as st
 
 from src.data.fetch_cold_alert import get_london_cold_alert, alert_severity, simulate_cold_alert
@@ -229,43 +227,6 @@ def render_forecast_section(prediction_df, analogues):
             )
 
     st.caption(FORMULA_COLD_MULT)
-
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-
-    fig.add_trace(
-        go.Scatter(
-            x=prediction_df["date"], y=prediction_df["predicted_risk"],
-            name="Predicted Risk", mode="lines+markers",
-            line=dict(color="#c62828", width=3),
-            fill="tozeroy", fillcolor="rgba(198,40,40,0.1)",
-        ),
-        secondary_y=False,
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            x=prediction_df["date"], y=prediction_df["temp_min"],
-            name="Min Temperature (°C)", mode="lines+markers",
-            line=dict(color="#1565c0", width=2, dash="dot"),
-        ),
-        secondary_y=True,
-    )
-
-    for level, y_val, colour in [("Yellow", 1, "#f9a825"), ("Amber", 2, "#ef6c00"), ("Red", 3, "#c62828")]:
-        fig.add_hline(y=y_val, line_dash="dash", line_color=colour,
-                      annotation_text=level, annotation_position="top left",
-                      secondary_y=False)
-
-    fig.update_layout(
-        height=350, margin={"t": 30, "b": 30, "l": 0, "r": 0},
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        hovermode="x unified",
-    )
-    fig.update_yaxes(title_text="Risk Level (0–3)", range=[0, 3.5], secondary_y=False)
-    fig.update_yaxes(title_text="Temperature (°C)", secondary_y=True)
-
-    st.plotly_chart(fig, config={"responsive": True})
-    st.caption(FORMULA_PREDICTED_RISK)
 
     if analogues:
         with st.expander("Historical Analogues — similar past weather patterns & hospital outcomes"):
