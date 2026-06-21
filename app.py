@@ -666,11 +666,30 @@ Scale: Good (< 0.25) · Fair (0.25–0.50) · Poor (0.50–0.75) · Very Poor (>
             ),
         )
 
+    show_predicted = map_mode.startswith("Predicted Risk") and "predicted_risk_score" in risk_df.columns
+    if show_predicted:
+        avg_risk = risk_df["predicted_risk_score"].mean()
+        max_risk = risk_df["predicted_risk_score"].max()
+        min_risk = risk_df["predicted_risk_score"].min()
+        max_possible = 1.0 * peak_multiplier
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("London average", f"{avg_risk:.2f}")
+        m2.metric("Highest borough", f"{max_risk:.2f}")
+        m3.metric("Lowest borough", f"{min_risk:.2f}")
+
+        st.caption(
+            f"Scale: 0 (no risk) to {max_possible:.1f} (max possible at "
+            f"peak severity {peak_multiplier}). "
+            f"Thresholds — ≤0: Low, ≤{peak_multiplier * 0.33:.1f}: Moderate, "
+            f"≤{peak_multiplier * 0.66:.1f}: High, >{peak_multiplier * 0.66:.1f}: Very High."
+        )
+
     col_map, col_table = st.columns([3, 2])
 
     with col_map:
         st.subheader("Borough Vulnerability Map")
-        if map_mode.startswith("Predicted Risk") and "predicted_risk_score" in risk_df.columns:
+        if show_predicted:
             fig = render_map(risk_df, geojson, color_col="predicted_risk_score", title="Predicted Risk")
         else:
             fig = render_map(risk_df, geojson)
