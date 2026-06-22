@@ -70,7 +70,3 @@ Risk level = vulnerability score × cold alert severity (0–3).
 - **Cold risk multiplier**: UKHSA-aligned temperature thresholds (>6°C Green, 2–6°C Yellow, -2–2°C Amber, <-2°C Red)
 - **Lag-effect convolution**: cold exposure at day T → respiratory admissions peak at T+3 to T+7
 - **Historical analogues**: Euclidean distance matching against 10 years of winter data
-
-## Team
-
-Health in Climate AI — London 2026
